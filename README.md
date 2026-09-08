@@ -110,6 +110,12 @@ A dashboard sheet refreshes after each run: capacity (ramp-up day, daily cap, se
 
 ![Listing-ingest workflow](images/05-workflow-listing-ingest.png)
 
+Each qualified listing lands in the Listings tab with this shape (header row only; the rows are real properties and stay private):
+
+![Listings tab schema](images/11-listings-schema.png)
+
+Address, city, state, ZIP, county, coordinates, drive minutes, price, MLS number, and listing URL, then the status and outcome columns the send pipeline writes. Coordinates and county are what the well lookup, the county table, and the drive-time step key on.
+
 Two things this canvas shows without any data on it: the enable check is the second node, before anything external is called, and the well lookup is a local service, so the qualification that matters most doesn't depend on a third party.
 
 ### The well-records lookup: a statewide public dataset made queryable
