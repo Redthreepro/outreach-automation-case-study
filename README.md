@@ -86,6 +86,16 @@ A dashboard sheet refreshes after each run: capacity (ramp-up day, daily cap, se
 
 Two things this canvas shows without any data on it: the enable check is the second node, before anything external is called, and the well lookup is a local service, so the qualification that matters most doesn't depend on a third party.
 
+### The well-records lookup: a statewide public dataset made queryable
+
+The company's coupon is for well-and-septic evaluations, so the single most valuable qualification is "does this property have a well." Michigan publishes water-well records as per-county GIS exports. Those exports, 39 counties covering the service area with a lithology table alongside each, were loaded onto the same machine as a locally hosted lookup service that the ingest workflow queries per listing. No per-listing API cost, no rate limit, no third party in the path.
+
+![Well-records dataset by county](images/06-well-records-counties.png)
+
+![One county's shapefile set](images/07-well-records-county-shapefile.png)
+
+A single county's well table runs to tens of megabytes; the largest in the service area is over 50 MB with a 75 MB lithology table. Michigan has no statewide septic registry, so the septic side of the qualification comes from the well side and the listing data rather than a records lookup.
+
 **Send and guardrails.** As described by the operator; the canvas will be added after a read-only export review: for each listing at status Send, compute inspector drive time and drop anything past the cap; check do-not-contact, cooldown, per-domain and daily caps, and the send window; route and send the transactional email; record state with duplicate protection; log every skip with a reason. A daily summary goes to the office.
 
 ## Results
@@ -138,6 +148,7 @@ Booked inspections attributable to the campaign are tracked in the company's sch
 | Guardrails | 5 stop controls, 4 volume caps, send window, 7-day cooldown, 90-minute drive cap, ramp-up |
 | Control plane | 3 spreadsheets: configuration, county coverage, dashboard |
 | Ingest cadence | every 2 hours, 7 AM to 9 PM, 7 days |
+| Well-records dataset | 39 counties of state GIS exports, hosted locally as a lookup service |
 
 ## How it was built
 
