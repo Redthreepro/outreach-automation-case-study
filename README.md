@@ -1,23 +1,23 @@
 # Compliance-guarded outreach automation — case study
 
-**The v1 of a listing-triggered outreach automation: every guardrail built before the first real send, then deliberately held back. Its production successor runs on n8n.**
-Ryan Faber / Red Three Pro, December 2025 onward. Built for a Michigan home-inspection company. Private.
+**A listing-triggered email automation for a home-inspection company: the v1 built with every guardrail first and deliberately held back, and the production rebuild that has run since January 2026.**
+Ryan Faber / Red Three Pro. Built for a Michigan home-inspection company. Private.
 
-> Documentation only. The source is private and the agent directory it reads is confidential. Verified against the repository and its database in September 2026. No agent, customer, or listing data appears here.
+> Documentation only. Source and data are private; no agent, customer, or listing data appears here. Numbers for the production system come from the email provider's statistics page and the system's own configuration and dashboard sheets, captured September 2026. Numbers for v1 come from its repository and database.
 
-**Status:** this case study covers the **v1 Node pipeline**, which was completed, test-verified end to end, and never launched: one recorded send, a test on 2025-12-15, kill switch off since. It was superseded by a **production rebuild on self-hosted n8n** that carries the same guardrails and has sent over 1,000 automated emails as of September 2026. The production system runs on separate infrastructure and is described here from the operator's account; a full write-up will follow once it has been audited the way the other case studies were. This document is about the design of the restraint, which is the part that carried over.
+**Status:** in production. 4,019 emails sent between January 4 and August 9, 2026 at 94.97% delivery and 0.00% spam complaints, with a spreadsheet control plane the office can operate and a kill switch that has been exercised.
 
 ---
 
 ## The problem
 
-When a home goes under contract, the buyer needs an inspection within days. The listing agent often influences who gets called. A home-inspection company that also does well and septic evaluations wanted to put a coupon in front of the listing agent at exactly that moment, automatically, from the MLS "new pending" notifications it already received by email.
+When a home goes under contract, the buyer needs an inspection within days, and the listing agent often influences who gets called. The company already received MLS "new pending" notifications. Put a well-and-septic coupon in front of the right agent at exactly that moment, automatically, without ever becoming the company that spams agents. The referral relationships are worth more than any campaign.
 
-The obvious build is twenty lines: parse the email, look up the agent, send. The obvious build is also how a company ends up on a blocklist, annoys the agents it depends on for referrals, and violates commercial email rules it has never read. The brief was to build the automation and to make it impossible for the automation to do damage.
+The twenty-line version of this sends email. The version that could be trusted to run unattended needed brakes before it needed an engine.
 
-## What got built
+## Part 1: v1, built with the brakes first (December 2025)
 
-A small Node service with one real endpoint and one job.
+A small Node service, seven source files, one job.
 
 ```mermaid
 flowchart LR
@@ -36,79 +36,112 @@ flowchart LR
   M --> L[(SQLite<br/>sends, suppression)]
 ```
 
-**Parse.** A regex parser pulls the MLS number, street address, city, state, ZIP, and price out of the raw notification. If it can't get an MLS number and a ZIP, it stops and says why.
+**Send policy, four checks in order, each logged with a reason when it blocks:** a kill switch that must literally equal `true` (off is the default); a suppression list with admin endpoints; a daily cap across all recipients (25 by default); a per-agent cooldown (21 days by default). Every non-send returns a structured reason, so a batch of notifications reads as a table of outcomes. A demo mode redirects every send to an internal address so the pipeline can run against real notifications with nobody receiving anything.
 
-**Filter.** The ZIP is checked against the company's service area. Out of area, stop.
+**Why v1 was held back.** The final integration needed the service to read a mailbox, and which mailbox, whose credentials, and what else that exposed were the company's decisions, not mine. And the guardrails covered volume, frequency, and opt-out but not consent, sender identification, or disclosure language. So v1 stopped one integration short: one recorded send, a test on 2025-12-15, kill switch off since. Adding a suppression list after the first angry reply means the first angry reply already happened.
 
-**Match.** The listing agent's name is normalized and looked up in the company's agent directory, an export from its scheduling system with flexible column handling because the export format was not under the company's control. No match, stop.
+## Part 2: the production rebuild (January 2026 to present)
 
-**Send policy.** Four checks, in order, each one logged with a reason when it blocks:
+Once the mailbox and compliance questions had answers, the system was rebuilt on self-hosted n8n with the v1 guardrails as the baseline rather than a rewrite. Three design choices define it.
 
-1. **Kill switch.** An environment flag that must literally equal `true`. Absent or anything else, nothing sends. This is the default state.
-2. **Suppression list.** Any address on it is never emailed. Admin endpoints add, remove, and list suppressions.
-3. **Daily cap.** A maximum number of sends per day across all agents. The shipped default is 25.
-4. **Per-agent cooldown.** An agent who received an email within the last N days is skipped. The shipped default is 21 days.
+### A spreadsheet is the control plane
 
-**Send and record.** A transactional email through Brevo, then a row in a local SQLite table with recipient, agent, listing, and timestamp, indexed for the cap and cooldown queries.
+Every operating parameter lives in a configuration sheet the office can read and edit without touching a workflow. The workflow reads it on every run.
 
-Every non-send returns a structured reason (`parse_failed`, `out_of_service_area`, `agent_not_found`, `send_disabled`, `suppressed`, `daily_cap_reached`, `agent_cooldown_active`, `send_failed`), so the operator can see exactly why a listing produced no email without reading logs.
+![Guardrail configuration sheet](images/03-guardrail-config.png)
 
-A demo mode redirects every send to a fixed internal recipient so the whole pipeline can be exercised against real notifications without any agent receiving anything.
+What the sheet controls, as captured in September 2026:
 
-## Why it was never launched
+| Control | Setting |
+|---|---|
+| Sending enabled, automation enabled, n8n enabled | three independent switches, all must be on |
+| System kill switch, manual pause | two ways to stop, one for emergencies and one for "not today" |
+| Test mode, dry-run mode | run the whole pipeline and send nothing, or send only to an internal address |
+| Send window | 07:00 to 21:00, active days configurable |
+| Max per run, max per day | 40 per run, 100 per day |
+| Per-domain daily limit | 25, so no single brokerage domain gets flooded |
+| Cooldown | 7 days per agent |
+| Drive-time qualification | 90-minute hard cap, drive-time lookups capped per run |
+| External API budget | calls per run capped, with a sleep between calls |
+| Ramp-up mode | start date and a rising daily cap, so volume grows gradually rather than arriving all at once |
+| Whitelist domains, daily summary | recipients for the daily digest; send-to-self domain for testing |
 
-Two reasons, both deliberate.
+### Service area is data, not code
 
-**The trigger wasn't right.** The design assumed notifications arriving in a mailbox the service could read. Wiring that final integration meant either a mail-forwarding rule or an inbound-mail hook, and both raised questions about which mailbox, whose credentials, and what else would be exposed. That decision belonged to the company, and it was never made.
+A county table with region and an active flag decides eligibility. Turning a county on or off is a cell edit.
 
-**The compliance posture wasn't finished.** The guardrails cover volume, frequency, and opt-out. They do not cover consent, sender identification, or the disclosure language commercial email rules require in the message body. Sending to a directory of agents who never opted in is the kind of thing that works until it very much doesn't. The right move was to stop one integration short and leave the kill switch off.
+![Service-area county table](images/02-service-area-counties.png)
 
-The service still runs. The one recorded send is a test. The live configuration omits the kill-switch flag entirely, which means the policy blocks everything by construction.
+### The operator sees the system's state at a glance
+
+A dashboard sheet refreshes after each run: capacity (ramp-up day, daily cap, sent today, remaining), backlog by status, last run and errors, today's deliverability (sent, hard bounces, spam complaints), and the three system settings that matter. When the kill switch is on, the header says so in red.
+
+![Control dashboard](images/01-control-dashboard.png)
+
+### What the pipeline does per run
+
+As described by the operator; the workflow canvas will be added after a read-only review of the exported workflows:
+
+1. Pull new listings and normalize them
+2. Apply service-area (county) and well/septic qualification rules
+3. Compute drive time from the nearest inspector; drop anything past the cap
+4. Check do-not-contact, cooldown, per-domain and daily caps, send window
+5. Route the lead and send the transactional email
+6. Record state with duplicate protection; log every skip with a reason; send the daily summary
+
+## Results
+
+Provider statistics for January 4 through August 9, 2026:
+
+![Provider statistics](images/04-provider-statistics.png)
+
+| Metric | Value |
+|---|---|
+| Emails sent | **4,019** |
+| Delivered | **94.97%** |
+| Estimated openers | 52.79% (trackable 36.95%) |
+| Unique clickers | 3.35% |
+| Hard bounce | 2.04% |
+| Soft bounce | 2.84% |
+| Blocked | 0.30% |
+| **Spam complaints** | **0.00%** |
+
+The daily chart shows the shape the guardrails produce: sends arrive in capped daily plateaus (the 40-per-run and 100-per-day limits, later raised under ramp-up), with gaps where the send window, the weekend schedule, or a pause held them back. A zero complaint rate across four thousand cold emails to real estate agents is the number the whole design was built to protect.
+
+Booked inspections attributable to the campaign are tracked in the company's scheduling system and are not published here.
 
 ## Decisions worth explaining
 
-**Fail closed, in the config and in the code.** A missing flag means off, not on. A missing cap value means the cap check is skipped, so the defaults are documented in the example config and the live config is expected to set them. A future improvement, noted honestly: make missing caps fail closed too.
+**Guardrails before the first send, in both versions.** v1's four checks became the production system's floor. The production system added the ones v1 lacked: per-domain limits, a send window, ramp-up, and a dry-run mode. Nothing was removed.
 
-**Reasons, not booleans.** Every stage returns a reason string. This cost nothing to build and made the demo-mode dry runs readable: a batch of notifications becomes a table of outcomes rather than a count of sends.
+**Configuration in a spreadsheet.** The office manager will never open n8n. A sheet with a KEY and a Value column is the interface everyone already knows, and it means a pause, a cap change, or a kill can happen from a phone.
 
-**Guardrails before the first send, not after the first complaint.** The suppression list, cap, and cooldown were built before any agent was contacted. The order matters. Adding a suppression list after the first angry reply means the first angry reply already happened.
+**Fail closed, three switches deep.** Sending, automation, and the workflow engine each have their own enable flag, plus a kill switch and a manual pause above them. Any one of five things off means nothing sends.
 
-**Keep it small.** Seven source files, one database, no framework beyond Express. There is nothing here that couldn't be read in full in twenty minutes, which is the right size for something that sends email on a company's behalf.
+**Ramp-up instead of launch.** Volume started small on a fixed date and rose on a schedule. Deliverability reputation is built, not declared, and a sudden spike from a fresh sender is how legitimate mail gets classified as spam.
 
-## What happened next: the production rebuild
+**Reasons, not booleans.** Every skip is logged with why. The daily summary is readable because of it.
 
-The v1 answered the question of what has to be true before an automated email is allowed to send. The production version, rebuilt on self-hosted n8n, answered the remaining two: the mailbox integration and the compliance posture. As reported by the operator (not yet independently audited):
+## What's not done
 
-- Property-listing ingest with service-area and well/septic qualification rules
-- Do-not-contact and per-agent cooldown controls, carried over from v1
-- Inspector drive-time qualification and lead routing
-- Persistent state with duplicate protection and failure logging
-- Over 1,000 automated emails sent in production
-
-The v1's four checks became the production system's baseline rather than being rebuilt from scratch, which is the practical argument for building guardrails before the first send: they survive the rewrite.
-
-## What's not done (v1)
-
-- The inbound-mail integration, by choice (solved in the n8n rebuild).
-- Consent and disclosure handling for commercial email (addressed in the rebuild; specifics pending audit).
-- Caps that fail closed when unset.
-- Version control. The project was built in a single push and never committed; it has since been protected with an ignore file but has no history.
+- The workflow canvas and per-node logic are not yet documented here; they will be after a read-only export review.
+- v1's caps skip the check when unset rather than failing closed. The production system's three-switch design supersedes it.
+- Consent and disclosure handling is present in the production system but not documented here until the export review.
 
 ## By the numbers
 
 | | |
 |---|---|
-| Source files | 7 |
-| Send-policy checks | 4, each logged with a reason |
-| Structured outcomes | 8 |
-| Shipped defaults | 25 sends/day, 21-day per-agent cooldown |
-| Sends recorded by v1 | 1 (test, 2025-12-15) |
-| Sends by the n8n production rebuild | 1,000+ (operator-reported, September 2026) |
-| Agent directory | five-figure record count, confidential |
+| v1 | 7 source files, 4 policy checks, 8 structured outcomes, 1 test send (2025-12-15), never launched |
+| Production | in operation January 2026 to present, self-hosted n8n |
+| Sent | 4,019 (Jan 4 to Aug 9, 2026) |
+| Delivered / hard bounce / complaints | 94.97% / 2.04% / 0.00% |
+| Guardrails | 5 stop controls, 4 volume caps, send window, 7-day cooldown, 90-minute drive cap, ramp-up |
+| Control plane | 3 spreadsheets: configuration, county coverage, dashboard |
 
 ## How it was built
 
-I defined the workflow, the service-area rule, and the four guardrails, and decided the launch conditions and that they had not been met. An AI coding agent wrote the parser, the directory loader, the policy module, the database layer, and the endpoints under that direction, and I verified the pipeline end to end in demo mode against real notifications before deciding not to flip the switch.
+I defined the workflow, the qualification rules, the guardrails and their order, the spreadsheet-as-control-plane design, and the decision to hold v1 until the compliance posture was right. AI coding agents wrote the v1 service and helped assemble and iterate the n8n workflows under that direction. I verified v1 end to end in demo mode before deciding not to launch it, and I operate the production system, watching the daily summary and the deliverability numbers.
 
 ---
 
