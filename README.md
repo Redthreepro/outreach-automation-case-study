@@ -1,6 +1,6 @@
 # Compliance-guarded outreach automation — case study
 
-**A listing-triggered email automation for a home-inspection company: the v1 built with every guardrail first and deliberately held back, and the production rebuild that has run since January 2026.**
+**A listing-triggered email automation for a home-inspection company: the v1 built with every guardrail first and deliberately held back, and the production rebuild on n8n and Google Apps Script that has run since January 2026.**
 Ryan Faber / Red Three Pro. Built for a Michigan home-inspection company. Private.
 
 > Documentation only. Source and data are private; no agent, customer, or listing data appears here. Numbers for the production system come from the email provider's statistics page and the system's own configuration and dashboard sheets, captured September 2026. Numbers for v1 come from its repository and database.
@@ -42,7 +42,33 @@ flowchart LR
 
 ## Part 2: the production rebuild (January 2026 to present)
 
-Once the mailbox and compliance questions had answers, the system was rebuilt on self-hosted n8n with the v1 guardrails as the baseline rather than a rewrite. Three design choices define it.
+Once the mailbox and compliance questions had answers, the system was rebuilt with the v1 guardrails as the baseline rather than a rewrite. It is two halves: **self-hosted n8n** ingests and qualifies listings, and **Google Apps Script inside the control workbook** runs every check, sends, logs, and reports. Three design choices define it.
+
+```mermaid
+flowchart LR
+  subgraph n8n["Self-hosted n8n (every 2 h, 7 AM–9 PM)"]
+    T[Schedule] --> C1[Read config sheet<br/>stop if disabled]
+    C1 --> S[Listing scraper]
+    S --> N[Normalize]
+    N --> W[Well-records lookup<br/>local service]
+    W --> F[Filter]
+  end
+  F -->|append| L[(Listings tab)]
+  subgraph GS["Google Sheets + Apps Script (every 30 min)"]
+    L --> RP[runPipeline]
+    K[(Config sheet)] --> RP
+    DNC[(Agent DB · DNC)] --> RP
+    RP --> G{Guardrails<br/>switches · window · caps<br/>domain limit · cooldown · drive time}
+    G -->|send| E[Email provider]
+    G -->|hold / skip + reason| L
+    E --> L
+    RP --> D[(Dashboard sheet)]
+    DS[sendDailySummary] --> O[Office inbox]
+    AS[dailyArchiveSweep] --> AR[(Archive)]
+  end
+  CP[Control panel sidebar<br/>kill switch · status · DNC · stats] --- K
+```
+
 
 ### A spreadsheet is the control plane
 
@@ -96,7 +122,25 @@ The company's coupon is for well-and-septic evaluations, so the single most valu
 
 A single county's well table runs to tens of megabytes; the largest in the service area is over 50 MB with a 75 MB lithology table. Michigan has no statewide septic registry, so the septic side of the qualification comes from the well side and the listing data rather than a records lookup.
 
-**Send and guardrails.** As described by the operator; the canvas will be added after a read-only export review: for each listing at status Send, compute inspector drive time and drop anything past the cap; check do-not-contact, cooldown, per-domain and daily caps, and the send window; route and send the transactional email; record state with duplicate protection; log every skip with a reason. A daily summary goes to the office.
+**Send, guardrails, and operations: Apps Script.** Everything after ingest lives in the workbook's script project, a 20-plus-file codebase whose file list reads as the feature list: agent database and new-agent handling, do-not-contact, drive time, emails and email testing, MLS API, market controls, click tracking, audit, archive and archive de-duplication, daily summary, dashboard, kill-switch UI, and a control panel served as a sidebar and a full page.
+
+![Apps Script project](images/08-apps-script-project.png)
+
+The file open in that screenshot is the menu builder, and its comment records a lesson worth keeping: the custom menu must render even if reading the kill-switch status throws, because a kill switch the operator can't reach is the worst possible failure mode for a kill switch. The menu gives the office one-click access to toggle sending, check system status, open the control panel, preview the email template, send a test to a custom address, and run the maintenance jobs.
+
+Three time-driven triggers run the system:
+
+![Triggers](images/09-apps-script-triggers.png)
+
+| Function | Cadence | Does |
+|---|---|---|
+| `runPipeline` | every 30 minutes | for each listing at status Send: drive-time qualification, do-not-contact, cooldown, send window, per-run, per-day and per-domain caps; send through the provider; write status, timestamp, and skip reason back; refresh the dashboard |
+| `sendDailySummary` | nightly | the day's sends, holds, skips, errors, and deliverability to the office |
+| `dailyArchiveSweep` | nightly | move finished rows to the archive and de-duplicate |
+
+The execution log shows the cadence and the cost: `runPipeline` every half hour on the minute, 17 to 25 seconds per run, completing every time in the window shown. The `cp_` functions are the control-panel sidebar loading settings, inspectors, the DNC list, stats, and the activity log when the office opens it.
+
+![Executions](images/10-apps-script-executions.png)
 
 ## Results
 
@@ -123,7 +167,7 @@ Booked inspections attributable to the campaign are tracked in the company's sch
 
 **Guardrails before the first send, in both versions.** v1's four checks became the production system's floor. The production system added the ones v1 lacked: per-domain limits, a send window, ramp-up, and a dry-run mode. Nothing was removed.
 
-**Configuration in a spreadsheet.** The office manager will never open n8n. A sheet with a KEY and a Value column is the interface everyone already knows, and it means a pause, a cap change, or a kill can happen from a phone.
+**The spreadsheet is the application.** The office manager will never open n8n, but they open this workbook every day. So the workbook is where the pipeline runs (Apps Script), where it's configured (a KEY/Value sheet), where it's monitored (the dashboard), and where it's controlled (a custom menu and a sidebar with the kill switch). n8n is only used for the part Sheets can't do well: scheduled scraping and a call to a local service. A pause, a cap change, or a kill can happen from a phone.
 
 **Fail closed, three switches deep.** Sending, automation, and the workflow engine each have their own enable flag, plus a kill switch and a manual pause above them. Any one of five things off means nothing sends.
 
@@ -133,7 +177,7 @@ Booked inspections attributable to the campaign are tracked in the company's sch
 
 ## What's not done
 
-- The send workflow's canvas and per-node logic are not yet documented here; they will be after a read-only export review. The ingest workflow is shown above.
+- Per-function logic inside the Apps Script project is described from file and function names, not from a line-by-line review.
 - v1's caps skip the check when unset rather than failing closed. The production system's three-switch design supersedes it.
 - Consent and disclosure handling is present in the production system but not documented here until the export review.
 
@@ -142,7 +186,9 @@ Booked inspections attributable to the campaign are tracked in the company's sch
 | | |
 |---|---|
 | v1 | 7 source files, 4 policy checks, 8 structured outcomes, 1 test send (2025-12-15), never launched |
-| Production | in operation January 2026 to present, self-hosted n8n |
+| Production | in operation January 2026 to present: self-hosted n8n (ingest) + Google Apps Script (everything else) |
+| Pipeline cadence | `runPipeline` every 30 minutes, 17–25 s per run; nightly summary and archive sweep |
+| Script project | 20+ files: agent DB, DNC, drive time, emails, MLS API, market controls, clicks, audit, archive, dashboard, kill-switch UI, control panel |
 | Sent | 4,019 (Jan 4 to Aug 9, 2026) |
 | Delivered / hard bounce / complaints | 94.97% / 2.04% / 0.00% |
 | Guardrails | 5 stop controls, 4 volume caps, send window, 7-day cooldown, 90-minute drive cap, ramp-up |
@@ -152,7 +198,7 @@ Booked inspections attributable to the campaign are tracked in the company's sch
 
 ## How it was built
 
-I defined the workflow, the qualification rules, the guardrails and their order, the spreadsheet-as-control-plane design, and the decision to hold v1 until the compliance posture was right. AI coding agents wrote the v1 service and helped assemble and iterate the n8n workflows under that direction. I verified v1 end to end in demo mode before deciding not to launch it, and I operate the production system, watching the daily summary and the deliverability numbers.
+I defined the workflow, the qualification rules, the guardrails and their order, the spreadsheet-as-the-application design, the n8n/Apps Script split, and the decision to hold v1 until the compliance posture was right. AI coding agents wrote the v1 service, the Apps Script project, and the n8n workflows under that direction. I verified v1 end to end in demo mode before deciding not to launch it, and I operate the production system, watching the daily summary and the deliverability numbers.
 
 ---
 
