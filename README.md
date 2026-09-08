@@ -78,16 +78,15 @@ A dashboard sheet refreshes after each run: capacity (ramp-up day, daily cap, se
 
 ![Control dashboard](images/01-control-dashboard.png)
 
-### What the pipeline does per run
+### The workflows
 
-As described by the operator; the workflow canvas will be added after a read-only review of the exported workflows:
+**Listing ingest.** Runs every two hours between 7 AM and 9 PM, seven days a week. It reads the configuration sheet first and stops if automation is off. Otherwise it calls a hosted scraper for new listings, normalizes each one, checks it against a locally hosted well-records lookup (the well/septic qualification), merges the result, filters, and appends qualified listings to the Listings tab that the send workflow consumes.
 
-1. Pull new listings and normalize them
-2. Apply service-area (county) and well/septic qualification rules
-3. Compute drive time from the nearest inspector; drop anything past the cap
-4. Check do-not-contact, cooldown, per-domain and daily caps, send window
-5. Route the lead and send the transactional email
-6. Record state with duplicate protection; log every skip with a reason; send the daily summary
+![Listing-ingest workflow](images/05-workflow-listing-ingest.png)
+
+Two things this canvas shows without any data on it: the enable check is the second node, before anything external is called, and the well lookup is a local service, so the qualification that matters most doesn't depend on a third party.
+
+**Send and guardrails.** As described by the operator; the canvas will be added after a read-only export review: for each listing at status Send, compute inspector drive time and drop anything past the cap; check do-not-contact, cooldown, per-domain and daily caps, and the send window; route and send the transactional email; record state with duplicate protection; log every skip with a reason. A daily summary goes to the office.
 
 ## Results
 
@@ -124,7 +123,7 @@ Booked inspections attributable to the campaign are tracked in the company's sch
 
 ## What's not done
 
-- The workflow canvas and per-node logic are not yet documented here; they will be after a read-only export review.
+- The send workflow's canvas and per-node logic are not yet documented here; they will be after a read-only export review. The ingest workflow is shown above.
 - v1's caps skip the check when unset rather than failing closed. The production system's three-switch design supersedes it.
 - Consent and disclosure handling is present in the production system but not documented here until the export review.
 
@@ -138,6 +137,7 @@ Booked inspections attributable to the campaign are tracked in the company's sch
 | Delivered / hard bounce / complaints | 94.97% / 2.04% / 0.00% |
 | Guardrails | 5 stop controls, 4 volume caps, send window, 7-day cooldown, 90-minute drive cap, ramp-up |
 | Control plane | 3 spreadsheets: configuration, county coverage, dashboard |
+| Ingest cadence | every 2 hours, 7 AM to 9 PM, 7 days |
 
 ## How it was built
 
