@@ -1,11 +1,11 @@
 # Compliance-guarded outreach automation — case study
 
-**An email automation built with every guardrail in place before the first real send, then deliberately left unlaunched.**
-Ryan Faber / Red Three Pro, December 2025. Built for a Michigan home-inspection company. Private, never launched.
+**The v1 of a listing-triggered outreach automation: every guardrail built before the first real send, then deliberately held back. Its production successor runs on n8n.**
+Ryan Faber / Red Three Pro, December 2025 onward. Built for a Michigan home-inspection company. Private.
 
 > Documentation only. The source is private and the agent directory it reads is confidential. Verified against the repository and its database in September 2026. No agent, customer, or listing data appears here.
 
-**Status:** complete and test-verified end to end. Exactly one send has ever been recorded, a test on 2025-12-15. The kill switch has been off since. This case study is about the design of the restraint, which is the part that transfers.
+**Status:** this case study covers the **v1 Node pipeline**, which was completed, test-verified end to end, and never launched: one recorded send, a test on 2025-12-15, kill switch off since. It was superseded by a **production rebuild on self-hosted n8n** that carries the same guardrails and has sent over 1,000 automated emails as of September 2026. The production system runs on separate infrastructure and is described here from the operator's account; a full write-up will follow once it has been audited the way the other case studies were. This document is about the design of the restraint, which is the part that carried over.
 
 ---
 
@@ -75,10 +75,22 @@ The service still runs. The one recorded send is a test. The live configuration 
 
 **Keep it small.** Seven source files, one database, no framework beyond Express. There is nothing here that couldn't be read in full in twenty minutes, which is the right size for something that sends email on a company's behalf.
 
-## What's not done
+## What happened next: the production rebuild
 
-- The inbound-mail integration, by choice.
-- Consent and disclosure handling for commercial email.
+The v1 answered the question of what has to be true before an automated email is allowed to send. The production version, rebuilt on self-hosted n8n, answered the remaining two: the mailbox integration and the compliance posture. As reported by the operator (not yet independently audited):
+
+- Property-listing ingest with service-area and well/septic qualification rules
+- Do-not-contact and per-agent cooldown controls, carried over from v1
+- Inspector drive-time qualification and lead routing
+- Persistent state with duplicate protection and failure logging
+- Over 1,000 automated emails sent in production
+
+The v1's four checks became the production system's baseline rather than being rebuilt from scratch, which is the practical argument for building guardrails before the first send: they survive the rewrite.
+
+## What's not done (v1)
+
+- The inbound-mail integration, by choice (solved in the n8n rebuild).
+- Consent and disclosure handling for commercial email (addressed in the rebuild; specifics pending audit).
 - Caps that fail closed when unset.
 - Version control. The project was built in a single push and never committed; it has since been protected with an ignore file but has no history.
 
@@ -90,7 +102,8 @@ The service still runs. The one recorded send is a test. The live configuration 
 | Send-policy checks | 4, each logged with a reason |
 | Structured outcomes | 8 |
 | Shipped defaults | 25 sends/day, 21-day per-agent cooldown |
-| Sends ever recorded | 1 (test, 2025-12-15) |
+| Sends recorded by v1 | 1 (test, 2025-12-15) |
+| Sends by the n8n production rebuild | 1,000+ (operator-reported, September 2026) |
 | Agent directory | five-figure record count, confidential |
 
 ## How it was built
