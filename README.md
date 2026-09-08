@@ -110,11 +110,20 @@ A dashboard sheet refreshes after each run: capacity (ramp-up day, daily cap, se
 
 ![Listing-ingest workflow](images/05-workflow-listing-ingest.png)
 
-Each qualified listing lands in the Listings tab with this shape (header row only; the rows are real properties and stay private):
+Each qualified listing lands in the Listings tab as one row. The 59 columns, grouped (names only; the rows are real properties and stay private):
 
-![Listings tab schema](images/11-listings-schema.png)
+| Group | Columns | What it tells you |
+|---|---|---|
+| Listing | Address, City, State, ZIP, Postal_Code, County, Latitude, Longitude, Price, List_Price, MLS_Number, MLS_Status, Listing_URL, Property_URL, Property_ID, List_Date, Beds, Baths, Sqft, Property_Type, Photo | the normalized listing |
+| Agent | Agent_Name, Agent_Email, Agent_Phone, Office_Name | the recipient, matched from the agent database |
+| Well qualification | well_nearby, nearest_well_id, distance_feet, threshold_feet, counties_searched, county_resolved_from | the local well-records lookup writes back the nearest well, its distance, and the threshold it was judged against, plus which county tables were searched and how the county was resolved |
+| Routing | Closest_Inspector, Backup_Inspector, Closest_Drive_Min, Backup_Closest_Drive_Min, Drive_Min | nearest and backup inspector by real drive time |
+| Eligibility and state | Eligible, Ineligible_Reason, Status, Status_Updated_At, Processing_Lock, Outreach_Key, Sent_Timestamp, Notes, Fulfillment_ID | the state machine: a reason for every ineligible row, a lock so two runs can't process the same row, and a dedupe key so an agent is never emailed twice for one listing |
+| Click tracking | Track_Yes_URL, Track_Meet_URL, Track_No_URL, Clicked_Action, Clicked_At | three tracked calls to action per email (yes, let's meet, no), so the response is measured per action, not just "opened" |
+| Provenance | Source, Date_Imported, Imported_At, Imported_From, Imported_Batch_ID | which scrape produced the row |
+| Archive | Archived_Flag, Archived_At, Archived_Timestamp | the nightly sweep's bookkeeping |
 
-Address, city, state, ZIP, county, coordinates, drive minutes, price, MLS number, and listing URL, then the status and outcome columns the send pipeline writes. Coordinates and county are what the well lookup, the county table, and the drive-time step key on.
+Three of those groups are the difference between a script and a system. A processing lock and a dedupe key are what let a 30-minute cron run safely against a shared sheet. An explicit ineligible-reason column is why the daily summary is readable. And three tracked links per email means the 3.35% click rate above is broken down by what the agent actually chose.
 
 Two things this canvas shows without any data on it: the enable check is the second node, before anything external is called, and the well lookup is a local service, so the qualification that matters most doesn't depend on a third party.
 
@@ -198,7 +207,7 @@ Booked inspections attributable to the campaign are tracked in the company's sch
 | Sent | 4,019 (Jan 4 to Aug 9, 2026) |
 | Delivered / hard bounce / complaints | 94.97% / 2.04% / 0.00% |
 | Guardrails | 5 stop controls, 4 volume caps, send window, 7-day cooldown, 90-minute drive cap, ramp-up |
-| Control plane | 3 spreadsheets: configuration, county coverage, dashboard |
+| Control plane | 3 spreadsheets: configuration, county coverage, dashboard; a 59-column Listings tab as the state store |
 | Ingest cadence | every 2 hours, 7 AM to 9 PM, 7 days |
 | Well-records dataset | 39 counties of state GIS exports, hosted locally as a lookup service |
 
